@@ -28,6 +28,12 @@ public final class ViraBotListener extends ListenerAdapter {
                 Commands.slash("leave", "Disconnect from the current voice channel")
         );
 
+        event.getJDA().updateCommands()
+                .queue(
+                        success -> LOGGER.info("Cleared stale global slash commands"),
+                        error -> LOGGER.error("Failed to clear stale global slash commands", error)
+                );
+
         event.getJDA().getGuilds().forEach(guild ->
                 guild.updateCommands()
                         .addCommands(commands)
