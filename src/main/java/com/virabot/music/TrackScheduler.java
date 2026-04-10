@@ -8,6 +8,8 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -31,21 +33,26 @@ public final class TrackScheduler extends AudioEventAdapter {
         queue.clear();
     }
 
+    public AudioTrack nextTrack() {
+        AudioTrack nextTrack = queue.poll();
+        player.startTrack(nextTrack, false);
+        return nextTrack;
+    }
+
+    public List<AudioTrack> getQueuedTracksSnapshot() {
+        return new ArrayList<>(queue);
+    }
+
     @Override
     public void onTrackEnd(AudioPlayer player, AudioTrack track, AudioTrackEndReason endReason) {
         if (endReason.mayStartNext) {
-            AudioTrack nextTrack = queue.poll();
-            player.startTrack(nextTrack, false);
+            nextTrack();
         }
     }
 
     @Override
     public void onTrackException(AudioPlayer player, AudioTrack track, FriendlyException exception) {
         LOGGER.error("Track playback failed for {}", track.getInfo().uri, exception);
-        AudioTrack nextTrack = queue.poll();
-        if (nextTrack != null) {
-            player.startTrack(nextTrack, false);
-        }
+        nextTrack();
     }
 }
-

@@ -25,6 +25,10 @@ public final class ViraBotListener extends ListenerAdapter {
                 Commands.slash("join", "Join your current voice channel"),
                 Commands.slash("play", "Play audio from a YouTube URL")
                         .addOptions(new OptionData(OptionType.STRING, "url", "A YouTube video URL", true)),
+                Commands.slash("queue", "Show the current music queue"),
+                Commands.slash("pause", "Pause the current track"),
+                Commands.slash("resume", "Resume the current track"),
+                Commands.slash("skip", "Skip the current track"),
                 Commands.slash("leave", "Disconnect from the current voice channel")
         );
 
@@ -47,7 +51,7 @@ public final class ViraBotListener extends ListenerAdapter {
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         switch (event.getName()) {
-            case "ping" -> event.reply("Pong!").queue();
+            case "ping" -> event.reply("Pong!").setEphemeral(true).queue();
             case "join" -> event.reply(musicService.connectToMemberVoiceChannel(event))
                     .setEphemeral(true)
                     .queue();
@@ -58,16 +62,36 @@ public final class ViraBotListener extends ListenerAdapter {
                     return;
                 }
 
-                event.deferReply().queue();
+                event.deferReply(true).queue();
                 musicService.loadAndPlay(event, url);
             }
-            case "leave" -> {
+            case "queue" -> {
                 if (event.getGuild() == null) {
                     event.reply("This command only works in a server.").setEphemeral(true).queue();
                     return;
                 }
 
-                event.reply(musicService.leave(event.getGuild()))
+                event.replyEmbeds(musicService.buildQueueEmbed(event.getGuild()))
+                        .setEphemeral(true)
+                        .queue();
+            }
+            case "pause" -> {
+                event.reply(musicService.pause(event))
+                        .setEphemeral(true)
+                        .queue();
+            }
+            case "resume" -> {
+                event.reply(musicService.resume(event))
+                        .setEphemeral(true)
+                        .queue();
+            }
+            case "skip" -> {
+                event.reply(musicService.skip(event))
+                        .setEphemeral(true)
+                        .queue();
+            }
+            case "leave" -> {
+                event.reply(musicService.leave(event))
                         .setEphemeral(true)
                         .queue();
             }

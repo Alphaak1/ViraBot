@@ -10,6 +10,7 @@ public final class GuildMusicManager {
 
     public GuildMusicManager(AudioPlayerManager playerManager) {
         this.player = playerManager.createPlayer();
+        this.player.setVolume(20);
         this.scheduler = new TrackScheduler(player);
         this.sendHandler = new AudioPlayerSendHandler(player);
         this.player.addListener(scheduler);
@@ -17,6 +18,10 @@ public final class GuildMusicManager {
 
     public AudioPlayerSendHandler getSendHandler() {
         return sendHandler;
+    }
+
+    public AudioPlayer getPlayer() {
+        return player;
     }
 
     public TrackScheduler getScheduler() {
@@ -28,4 +33,3 @@ public final class GuildMusicManager {
         player.stopTrack();
     }
 }
-
