@@ -60,9 +60,12 @@ public final class ViraBotListener extends ListenerAdapter {
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
         switch (event.getName()) {
             case "ping" -> event.reply("Pong!").setEphemeral(true).queue();
-            case "join" -> event.reply(musicService.connectToMemberVoiceChannel(event))
-                    .setEphemeral(true)
-                    .queue();
+            case "join" -> {
+                event.deferReply(true).queue();
+                event.getHook()
+                        .sendMessage(musicService.connectToMemberVoiceChannel(event))
+                        .queue();
+            }
             case "play" -> {
                 String url = event.getOption("url", null, option -> option.getAsString().trim());
                 if (url == null || url.isBlank()) {
@@ -91,8 +94,9 @@ public final class ViraBotListener extends ListenerAdapter {
             }
             case "language" -> {
                 String languageCode = event.getOption("mode", "en", option -> option.getAsString());
-                event.reply(musicService.setLanguage(event, languageCode))
-                        .setEphemeral(true)
+                event.deferReply(true).queue();
+                event.getHook()
+                        .sendMessage(musicService.setLanguage(event, languageCode))
                         .queue();
             }
             case "announcements" -> {
@@ -112,13 +116,15 @@ public final class ViraBotListener extends ListenerAdapter {
                         .queue();
             }
             case "skip" -> {
-                event.reply(musicService.skip(event))
-                        .setEphemeral(true)
+                event.deferReply(true).queue();
+                event.getHook()
+                        .sendMessage(musicService.skip(event))
                         .queue();
             }
             case "leave" -> {
-                event.reply(musicService.leave(event))
-                        .setEphemeral(true)
+                event.deferReply(true).queue();
+                event.getHook()
+                        .sendMessage(musicService.leave(event))
                         .queue();
             }
             default -> {
