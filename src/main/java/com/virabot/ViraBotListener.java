@@ -26,6 +26,14 @@ public final class ViraBotListener extends ListenerAdapter {
                 Commands.slash("play", "Play audio from a YouTube URL")
                         .addOptions(new OptionData(OptionType.STRING, "url", "A YouTube video URL", true)),
                 Commands.slash("queue", "Show the current music queue"),
+                Commands.slash("language", "Choose the spoken announcement language")
+                        .addOptions(new OptionData(OptionType.STRING, "mode", "Voice language", true)
+                                .addChoice("English", "en")
+                                .addChoice("Japanese", "ja")),
+                Commands.slash("greeting", "Enable or disable the voice greeting")
+                        .addOptions(new OptionData(OptionType.BOOLEAN, "enabled", "Whether greeting is enabled", true)),
+                Commands.slash("announcements", "Enable or disable spoken track announcements")
+                        .addOptions(new OptionData(OptionType.BOOLEAN, "enabled", "Whether song announcements are enabled", true)),
                 Commands.slash("pause", "Pause the current track"),
                 Commands.slash("resume", "Resume the current track"),
                 Commands.slash("skip", "Skip the current track"),
@@ -72,6 +80,24 @@ public final class ViraBotListener extends ListenerAdapter {
                 }
 
                 event.replyEmbeds(musicService.buildQueueEmbed(event.getGuild()))
+                        .setEphemeral(true)
+                        .queue();
+            }
+            case "greeting" -> {
+                boolean enabled = event.getOption("enabled", false, option -> option.getAsBoolean());
+                event.reply(musicService.setGreetingEnabled(event, enabled))
+                        .setEphemeral(true)
+                        .queue();
+            }
+            case "language" -> {
+                String languageCode = event.getOption("mode", "en", option -> option.getAsString());
+                event.reply(musicService.setLanguage(event, languageCode))
+                        .setEphemeral(true)
+                        .queue();
+            }
+            case "announcements" -> {
+                boolean enabled = event.getOption("enabled", false, option -> option.getAsBoolean());
+                event.reply(musicService.setAnnouncementsEnabled(event, enabled))
                         .setEphemeral(true)
                         .queue();
             }

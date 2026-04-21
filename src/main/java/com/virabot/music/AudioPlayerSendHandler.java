@@ -8,16 +8,23 @@ import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import net.dv8tion.jda.api.audio.AudioSendHandler;
 
 public final class AudioPlayerSendHandler implements AudioSendHandler {
-    private final AudioPlayer player;
+    private final AudioPlayer announcementPlayer;
+    private final AudioPlayer musicPlayer;
     private AudioFrame lastFrame;
 
-    public AudioPlayerSendHandler(AudioPlayer player) {
-        this.player = player;
+    public AudioPlayerSendHandler(AudioPlayer announcementPlayer, AudioPlayer musicPlayer) {
+        this.announcementPlayer = announcementPlayer;
+        this.musicPlayer = musicPlayer;
     }
 
     @Override
     public boolean canProvide() {
-        lastFrame = player.provide();
+        lastFrame = announcementPlayer.provide();
+        if (lastFrame != null) {
+            return true;
+        }
+
+        lastFrame = musicPlayer.provide();
         return lastFrame != null;
     }
 
@@ -31,4 +38,3 @@ public final class AudioPlayerSendHandler implements AudioSendHandler {
         return true;
     }
 }
-

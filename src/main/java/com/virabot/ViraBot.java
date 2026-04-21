@@ -1,5 +1,6 @@
 package com.virabot;
 
+import com.virabot.config.EnvConfig;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.audio.AudioModuleConfig;
@@ -19,7 +20,7 @@ public final class ViraBot {
     }
 
     public static void main(String[] args) {
-        String token = System.getenv("DISCORD_TOKEN");
+        String token = EnvConfig.get("DISCORD_TOKEN");
         if (token == null || token.isBlank()) {
             throw new IllegalStateException("DISCORD_TOKEN is not set.");
         }

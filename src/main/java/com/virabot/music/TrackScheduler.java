@@ -16,17 +16,20 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public final class TrackScheduler extends AudioEventAdapter {
     private static final Logger LOGGER = LoggerFactory.getLogger(TrackScheduler.class);
 
-    private final AudioPlayer player;
+    private final GuildMusicManager guildMusicManager;
     private final Queue<AudioTrack> queue = new ConcurrentLinkedQueue<>();
 
-    public TrackScheduler(AudioPlayer player) {
-        this.player = player;
+    public TrackScheduler(GuildMusicManager guildMusicManager) {
+        this.guildMusicManager = guildMusicManager;
     }
 
     public void queue(AudioTrack track) {
-        if (!player.startTrack(track, true)) {
-            queue.offer(track);
+        if (guildMusicManager.isPlaybackIdle()) {
+            guildMusicManager.beginTrack(track);
+            return;
         }
+
+        queue.offer(track);
     }
 
     public void clearQueue() {
@@ -35,8 +38,18 @@ public final class TrackScheduler extends AudioEventAdapter {
 
     public AudioTrack nextTrack() {
         AudioTrack nextTrack = queue.poll();
-        player.startTrack(nextTrack, false);
+        if (nextTrack != null) {
+            guildMusicManager.beginTrack(nextTrack);
+        }
         return nextTrack;
+    }
+
+    public AudioTrack peekNextTrack() {
+        return queue.peek();
+    }
+
+    public AudioTrack pollNextTrack() {
+        return queue.poll();
     }
 
     public List<AudioTrack> getQueuedTracksSnapshot() {

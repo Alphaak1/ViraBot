@@ -14,6 +14,12 @@ import dev.lavalink.youtube.clients.MWeb;
 import dev.lavalink.youtube.clients.Web;
 import dev.lavalink.youtube.clients.WebEmbedded;
 import dev.lavalink.youtube.clients.skeleton.Client;
+import com.virabot.config.EnvConfig;
+import com.virabot.persistence.DatabaseManager;
+import com.virabot.persistence.GuildSettings;
+import com.virabot.persistence.GuildSettingsRepository;
+import com.virabot.persistence.PlayHistoryRepository;
+import com.virabot.voice.SpeechService;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
@@ -21,20 +27,42 @@ import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.managers.AudioManager;
 import net.dv8tion.jda.api.entities.MessageEmbed;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.awt.Color;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class MusicService {
     private static final int DEFAULT_VOLUME = 20;
+    private static final Logger LOGGER = LoggerFactory.getLogger(MusicService.class);
 
     private final AudioPlayerManager playerManager;
     private final Map<Long, GuildMusicManager> musicManagers = new ConcurrentHashMap<>();
+    private final GuildSettingsRepository guildSettingsRepository;
+    private final PlayHistoryRepository playHistoryRepository;
+    private final SpeechService speechService;
 
     public MusicService() {
         this.playerManager = new DefaultAudioPlayerManager();
+        Path databasePath = resolveDatabasePath();
+        Path ttsTempDirectory = resolveTtsDirectory(databasePath);
+        String englishVoiceId = firstPresent(EnvConfig.get("ELEVENLABS_ENGLISH_VOICE_ID"), EnvConfig.get("ELEVENLABS_VOICE_ID"));
+        String japaneseVoiceId = EnvConfig.get("ELEVENLABS_JAPANESE_VOICE_ID");
+        String defaultModelId = defaultValue(EnvConfig.get("ELEVENLABS_MODEL_ID"), "eleven_multilingual_v2");
+        DatabaseManager databaseManager = new DatabaseManager(databasePath);
+        this.guildSettingsRepository = new GuildSettingsRepository(databaseManager, englishVoiceId, defaultModelId);
+        this.playHistoryRepository = new PlayHistoryRepository(databaseManager);
+        this.speechService = new SpeechService(
+                EnvConfig.get("ELEVENLABS_API_KEY"),
+                englishVoiceId,
+                japaneseVoiceId,
+                defaultModelId,
+                ttsTempDirectory
+        );
 
         YoutubeAudioSourceManager youtubeSourceManager = new YoutubeAudioSourceManager(
                 false,
@@ -65,19 +93,20 @@ public final class MusicService {
         audioManager.setSelfDeafened(true);
         audioManager.setSendingHandler(musicManager.getSendHandler());
         audioManager.openAudioConnection(channel);
+        musicManager.playGreeting(channel.getName());
         return "Joined **" + channel.getName() + "**.";
     }
 
     public void loadAndPlay(SlashCommandInteractionEvent event, String trackUrl) {
         Guild guild = event.getGuild();
         if (guild == null) {
-            event.reply("This command only works in a server.").setEphemeral(true).queue();
+            event.getHook().sendMessage("This command only works in a server.").queue();
             return;
         }
 
         AudioChannel channel = getRequesterChannel(event);
         if (channel == null) {
-            event.reply("Join a voice channel first.").setEphemeral(true).queue();
+            event.getHook().sendMessage("Join a voice channel first.").queue();
             return;
         }
 
@@ -91,7 +120,7 @@ public final class MusicService {
         playerManager.loadItemOrdered(musicManager, trackUrl, new AudioLoadResultHandler() {
             @Override
             public void trackLoaded(AudioTrack track) {
-                musicManager.getScheduler().queue(track);
+                musicManager.queueTrack(track);
                 event.getHook().sendMessage("Queued **" + track.getInfo().title + "**.").queue();
             }
 
@@ -104,7 +133,7 @@ public final class MusicService {
                     return;
                 }
 
-                musicManager.getScheduler().queue(track);
+                musicManager.queueTrack(track);
                 event.getHook().sendMessage("Queued **" + track.getInfo().title + "**.").queue();
             }
 
@@ -126,11 +155,17 @@ public final class MusicService {
             return "This command only works in a server.";
         }
 
-        GuildMusicManager musicManager = getGuildMusicManager(guild);
-        guild.getAudioManager().closeAudioConnection();
-        musicManager.stop();
-        musicManagers.remove(guild.getIdLong());
-        return "Disconnected from voice.";
+        GuildMusicManager musicManager = getExistingGuildMusicManager(guild);
+        if (musicManager == null || guild.getAudioManager().getConnectedChannel() == null) {
+            return "I am not connected to a voice channel.";
+        }
+
+        musicManager.playFarewell(() -> {
+            guild.getAudioManager().closeAudioConnection();
+            musicManager.stop();
+            musicManagers.remove(guild.getIdLong());
+        });
+        return "Leaving voice after a final message.";
     }
 
     public String pause(SlashCommandInteractionEvent event) {
@@ -201,18 +236,18 @@ public final class MusicService {
         }
 
         String skippedTitle = currentTrack.getInfo().title;
-        AudioTrack nextTrack = musicManager.getScheduler().nextTrack();
-        player.setPaused(false);
+        AudioTrack nextTrack = musicManager.skipCurrentTrack();
         if (nextTrack == null) {
             return "Skipped **" + skippedTitle + "**. The queue is now empty.";
         }
 
-        return "Skipped **" + skippedTitle + "**. Now playing **" + nextTrack.getInfo().title + "**.";
+        return "Skipped **" + skippedTitle + "**. Preparing **" + nextTrack.getInfo().title + "**.";
     }
 
     public MessageEmbed buildQueueEmbed(Guild guild) {
         GuildMusicManager musicManager = getExistingGuildMusicManager(guild);
         if (musicManager == null) {
+            GuildSettings settings = guildSettingsRepository.getOrCreate(guild.getIdLong());
             return new EmbedBuilder()
                     .setTitle("ViraBot Queue")
                     .setColor(new Color(46, 204, 113))
@@ -220,24 +255,34 @@ public final class MusicService {
                     .addField("Status", "Idle", true)
                     .addField("Volume", DEFAULT_VOLUME + "%", true)
                     .addField("Queued", "0", true)
+                    .addField("Language", describeLanguage(settings.languageCode()), true)
+                    .addField("Greeting", settings.greetingEnabled() ? "On" : "Off", true)
+                    .addField("Announcements", settings.announcementsEnabled() ? "On" : "Off", true)
                     .addField("Now Playing", "Nothing is currently playing.", false)
                     .addField("Up Next", "No tracks queued.", false)
                     .build();
         }
 
+        GuildSettings settings = guildSettingsRepository.getOrCreate(guild.getIdLong());
         AudioPlayer player = musicManager.getPlayer();
         AudioTrack currentTrack = player.getPlayingTrack();
+        AudioTrack pendingTrack = musicManager.getPendingMusicTrack();
         List<AudioTrack> queuedTracks = musicManager.getScheduler().getQueuedTracksSnapshot();
         EmbedBuilder embed = new EmbedBuilder()
                 .setTitle("ViraBot Queue")
                 .setColor(new Color(46, 204, 113))
                 .setDescription("Tracks in playback order for **" + guild.getName() + "**")
-                .addField("Status", currentTrack == null ? "Idle" : (player.isPaused() ? "Paused" : "Playing"), true)
+                .addField("Status", resolveStatus(musicManager, player, currentTrack), true)
                 .addField("Volume", player.getVolume() + "%", true)
-                .addField("Queued", String.valueOf(queuedTracks.size()), true);
+                .addField("Queued", String.valueOf(queuedTracks.size()), true)
+                .addField("Language", describeLanguage(settings.languageCode()), true)
+                .addField("Greeting", settings.greetingEnabled() ? "On" : "Off", true)
+                .addField("Announcements", settings.announcementsEnabled() ? "On" : "Off", true);
 
-        if (currentTrack == null) {
+        if (currentTrack == null && pendingTrack == null) {
             embed.addField("Now Playing", "Nothing is currently playing.", false);
+        } else if (currentTrack == null) {
+            embed.addField("Now Playing", "Preparing **" + pendingTrack.getInfo().title + "**.", false);
         } else {
             embed.addField("Now Playing", "1. " + currentTrack.getInfo().title, false);
         }
@@ -262,7 +307,10 @@ public final class MusicService {
     }
 
     private GuildMusicManager getGuildMusicManager(Guild guild) {
-        return musicManagers.computeIfAbsent(guild.getIdLong(), id -> new GuildMusicManager(playerManager));
+        return musicManagers.computeIfAbsent(guild.getIdLong(), id -> {
+            guildSettingsRepository.getOrCreate(id);
+            return new GuildMusicManager(id, playerManager, guildSettingsRepository, playHistoryRepository, speechService);
+        });
     }
 
     private GuildMusicManager getExistingGuildMusicManager(Guild guild) {
@@ -276,5 +324,94 @@ public final class MusicService {
         }
 
         return member.getVoiceState().getChannel();
+    }
+
+    public String setGreetingEnabled(SlashCommandInteractionEvent event, boolean enabled) {
+        Guild guild = event.getGuild();
+        if (guild == null) {
+            return "This command only works in a server.";
+        }
+
+        guildSettingsRepository.updateGreetingEnabled(guild.getIdLong(), enabled);
+        return enabled
+                ? "Join greeting is now enabled."
+                : "Join greeting is now disabled.";
+    }
+
+    public String setAnnouncementsEnabled(SlashCommandInteractionEvent event, boolean enabled) {
+        Guild guild = event.getGuild();
+        if (guild == null) {
+            return "This command only works in a server.";
+        }
+
+        guildSettingsRepository.updateAnnouncementsEnabled(guild.getIdLong(), enabled);
+        return enabled
+                ? "Track announcements are now enabled."
+                : "Track announcements are now disabled.";
+    }
+
+    public String setLanguage(SlashCommandInteractionEvent event, String languageCode) {
+        Guild guild = event.getGuild();
+        if (guild == null) {
+            return "This command only works in a server.";
+        }
+
+        String normalizedLanguage = normalizeLanguage(languageCode);
+        guildSettingsRepository.updateLanguageCode(guild.getIdLong(), normalizedLanguage);
+        GuildMusicManager musicManager = getExistingGuildMusicManager(guild);
+        var connectedChannel = guild.getAudioManager().getConnectedChannel();
+        if (musicManager != null && connectedChannel != null) {
+            musicManager.playGreeting(connectedChannel.getName());
+            return "Voice language is now set to **" + describeLanguage(normalizedLanguage)
+                    + "**. Replaying the greeting in the current channel.";
+        }
+
+        return "Voice language is now set to **" + describeLanguage(normalizedLanguage) + "**.";
+    }
+
+    private String resolveStatus(GuildMusicManager musicManager, AudioPlayer player, AudioTrack currentTrack) {
+        if (musicManager.isAnnouncementPlaying()) {
+            return "Announcing";
+        }
+        if (currentTrack == null) {
+            return "Idle";
+        }
+        return player.isPaused() ? "Paused" : "Playing";
+    }
+
+    private Path resolveDatabasePath() {
+        String configuredPath = EnvConfig.get("VIRABOT_DB_PATH");
+        if (configuredPath == null || configuredPath.isBlank()) {
+            return Path.of("data", "virabot.db");
+        }
+        return Path.of(configuredPath);
+    }
+
+    private Path resolveTtsDirectory(Path databasePath) {
+        Path parent = databasePath.toAbsolutePath().getParent();
+        if (parent == null) {
+            LOGGER.warn("Database path {} has no parent directory; using local tts-temp directory", databasePath);
+            return Path.of("tts-temp");
+        }
+        return parent.resolve("tts-temp");
+    }
+
+    private String defaultValue(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String firstPresent(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first;
+        }
+        return second;
+    }
+
+    private String normalizeLanguage(String languageCode) {
+        return "ja".equalsIgnoreCase(languageCode) ? "ja" : "en";
+    }
+
+    private String describeLanguage(String languageCode) {
+        return "ja".equalsIgnoreCase(languageCode) ? "Japanese" : "English";
     }
 }
